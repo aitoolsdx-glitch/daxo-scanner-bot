@@ -7,10 +7,10 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from groq import Groq
 from aiohttp import web
 
-# Логирование для отслеживания ошибок в консоли Render
+# Логи для мониторинга в Render
 logging.basicConfig(level=logging.INFO)
 
-# --- КОНФИГУРАЦИЯ ---
+# --- CONFIG ---
 TOKEN = os.getenv('BOT_TOKEN')
 GROQ_KEY = os.getenv('GROQ_KEY')
 ADMIN_ID = 5476069446
@@ -18,98 +18,82 @@ ADMIN_ID = 5476069446
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 client = Groq(api_key=GROQ_KEY)
-
-# База данных пользователей (в памяти)
 users_db = set()
 
-# --- КНОПКИ АДМИНКИ ---
+# --- АДМИН ПАНЕЛЬ ---
 def get_admin_kb():
     buttons = [
         [InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
-        [InlineKeyboardButton(text="📢 Сделать рассылку", callback_data="prep_send")]
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="prep_broadcast")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# --- ОБРАБОТЧИКИ (HANDLERS) ---
+# --- ХЕНДЛЕРЫ ---
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
     if user_id not in users_db:
         users_db.add(user_id)
-        # Уведомление админу о новом пользователе
+        # Уведомление тебе в личку
         try:
-            await bot.send_message(
-                ADMIN_ID, 
-                f"🆕 **Новый пользователь!**\n👤: {message.from_user.full_name}\n🆔: `{user_id}`\n🔗: @{message.from_user.username}"
-            )
+            await bot.send_message(ADMIN_ID, f"🆕 **Новый пользователь!**\nID: `{user_id}`\nИмя: {message.from_user.full_name}")
         except: pass
-    
-    await message.answer(">> CHIIP System Online\nПришли текст или документ для мгновенного анализа безопасности.")
+    await message.answer(">> CHIIP System Online\nПришли текст или файл для анализа.")
 
 @dp.message(Command("admin"))
 async def cmd_admin(message: types.Message):
     if message.from_user.id == ADMIN_ID:
-        await message.answer(f"🛠 **Панель управления CHIIP**\nЮзеров онлайн: {len(users_db)}", reply_markup=get_admin_kb())
+        await message.answer(f"🛠 **Панель CHIIP**\nЮзеров: {len(users_db)}", reply_markup=get_admin_kb())
 
 @dp.callback_query(F.data == "stats")
-async def callback_stats(callback: types.CallbackQuery):
+async def call_stats(callback: types.CallbackQuery):
     await callback.message.answer(f"📈 Всего уникальных пользователей: {len(users_db)}")
     await callback.answer()
 
-@dp.callback_query(F.data == "prep_send")
-async def callback_prep(callback: types.CallbackQuery):
-    await callback.message.answer("Чтобы отправить сообщение всем, напиши:\n`/send Твой текст` (например: /send Бот обновлен!)")
-    await callback.answer()
-
 @dp.message(Command("send"))
-async def cmd_broadcast(message: types.Message):
+async def cmd_send_all(message: types.Message):
     if message.from_user.id == ADMIN_ID:
-        # Извлекаем текст после команды /send
-        broadcast_text = message.text.replace("/send", "").strip()
-        if not broadcast_text:
-            return await message.answer("❌ Ошибка: введи текст сообщения.")
-        
-        success = 0
-        for uid in users_db:
+        text = message.text.replace("/send", "").strip()
+        if not text: return await message.answer("Напиши текст сообщения после команды.")
+        count = 0
+        for u in users_db:
             try:
-                await bot.send_message(uid, f"📢 **Сообщение от CHIIP:**\n\n{broadcast_text}")
-                success += 1
+                await bot.send_message(u, f"📢 **Сообщение от CHIIP:**\n\n{text}")
+                count += 1
             except: pass
-        await message.answer(f"✅ Рассылка завершена. Получили: {success} чел.")
+        await message.answer(f"✅ Отправлено: {count}")
 
-# Основной обработчик анализа (текст и файлы)
 @dp.message()
-async def analyze_handler(message: types.Message):
+async def analyze_everything(message: types.Message):
     users_db.add(message.from_user.id)
     
-    # Определяем, что за контент
+    # Определяем тип контента
+    content = ""
     if message.document:
-        target = f"Файл: {message.document.file_name}"
+        content = f"Файл для анализа: {message.document.file_name}"
     elif message.text:
-        target = message.text
+        content = message.text
     else:
         return
 
-    wait_msg = await message.answer("🔍 **CHIIP сканирует пакет данных...**")
-    
+    status = await message.answer("🔍 **CHIIP анализирует...**")
     try:
         completion = client.chat.completions.create(
-            messages=[{"role": "user", "content": f"Сделай экспертный отчет по безопасности для: {target}. Стиль: хакерский терминал."}],
+            messages=[{"role": "user", "content": f"Сделай краткий аудит безопасности для: {content}"}],
             model="llama3-8b-8192",
         )
-        await wait_msg.edit_text(f"📦 **Вердикт:**\n{completion.choices[0].message.content}")
+        await status.edit_text(f"📦 **Вердикт:**\n{completion.choices[0].message.content}")
     except Exception as e:
-        await wait_msg.edit_text(f"❌ Ошибка нейросети: {str(e)}")
+        await status.edit_text(f"❌ Ошибка ИИ: {e}")
 
-# --- ВЕБ-СЕРВЕР (KEEP-ALIVE) ---
-async def handle_web(request):
-    return web.Response(text="CHIIP Status: Active")
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER ---
+async def handle_ping(request):
+    return web.Response(text="CHIIP is alive")
 
 async def main():
-    # Запуск веб-сервера для Render
     app = web.Application()
-    app.router.add_get("/", handle_web)
+    app.router.add_get("/", handle_ping)
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.getenv("PORT", 10000))
