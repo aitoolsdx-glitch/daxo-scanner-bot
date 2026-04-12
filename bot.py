@@ -9,7 +9,7 @@ from aiohttp import web
 # --- НАСТРОЙКИ ---
 TOKEN = os.getenv('BOT_TOKEN')
 GROQ_KEY = os.getenv('GROQ_KEY')
-ADMIN_ID = 6265715875 
+ADMIN_ID = 5476069446
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
